@@ -8,17 +8,14 @@ import scipy.io as sio
 import argparse
 import ast
 
-import time
-import numpy as np
-from PIL import ImageGrab
 from api import PRN
 from torchvision import transforms, utils, models
 
 
 from utils.estimate_pose import estimate_pose
 from utils.rotate_vertices import frontalize
-from utils.render_app import get_visibility, get_uv_mask, get_depth_image
-from utils.write import write_obj_with_colors, write_obj_with_texture
+# from utils.render_app import get_visibility, get_uv_mask, get_depth_image
+# from utils.write import write_obj_with_colors, write_obj_with_texture
 
 from config.config import FLAGS
 
@@ -53,7 +50,7 @@ def main(args):
     for i, image_path in enumerate(image_path_list):
 
         name = image_path.strip().split('/')[-1][:-4]
-        print(name)
+
         # read image
         image = cv2.imread(image_path)
         [h, w, c] = image.shape
@@ -84,90 +81,55 @@ def main(args):
         if args.isImage:
             cv2.imwrite(os.path.join(save_folder, name + '.jpg'), image)
 
-        if args.is3d:
-            # corresponding colors
-           
-            if args.isTexture:
-                if args.texture_size != 256:
-                    pos_interpolated = cv2.resize(pos, (args.texture_size, args.texture_size))
-                else:
-                    pos_interpolated = pos.copy()
-                    texture = cv2.remap(image, pos_interpolated[:, :, :2].astype(np.float32), None,
-                                    interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0))
-                if args.isMask:
-                    vertices_vis = get_visibility(vertices, prn.triangles, h, w)
-                    uv_mask = get_uv_mask(vertices_vis, prn.triangles, prn.uv_coords, h, w, prn.resolution_op)
-                    uv_mask = cv2.resize(uv_mask, (args.texture_size, args.texture_size))
-                    texture = texture * uv_mask[:, :, np.newaxis]
-                    write_obj_with_texture(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles, texture,
-                                       prn.uv_coords / prn.resolution_op)  # save 3d face with texture(can open with meshlab)
-            else:
-                write_obj_with_colors(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles,
-                                      colors)  # save 3d face(can open with meshlab)
-            os.system(os.path.join(save_folder, name + '.obj'))
+        # if args.is3d:
+        #     # corresponding colors
+        #     colors = prn.get_colors(image, vertices)
+        #
+        #     if args.isTexture:
+        #         if args.texture_size != 256:
+        #             pos_interpolated = cv2.resize(pos, (args.texture_size, args.texture_size), preserve_range=True)
+        #         else:
+        #             pos_interpolated = pos.copy()
+        #         texture = cv2.remap(image, pos_interpolated[:, :, :2].astype(np.float32), None,
+        #                             interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0))
+        #         if args.isMask:
+        #             vertices_vis = get_visibility(vertices, prn.triangles, h, w)
+        #             uv_mask = get_uv_mask(vertices_vis, prn.triangles, prn.uv_coords, h, w, prn.resolution_op)
+        #             uv_mask = cv2.resize(uv_mask, (args.texture_size, args.texture_size), preserve_range=True)
+        #             texture = texture * uv_mask[:, :, np.newaxis]
+        #         write_obj_with_texture(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles, texture,
+        #                                prn.uv_coords / prn.resolution_op)  # save 3d face with texture(can open with meshlab)
+        #     else:
+        #         write_obj_with_colors(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles,
+        #                               colors)  # save 3d face(can open with meshlab)
 
-        if args.isDepth:
-            depth_image = get_depth_image(vertices, prn.triangles, h, w, True)
-            depth = get_depth_image(vertices, prn.triangles, h, w)
-            cv2.imwrite(os.path.join(save_folder, name + '_depth.jpg'), depth_image)
-            sio.savemat(os.path.join(save_folder, name + '_depth.mat'), {'depth': depth})
+        # if args.isDepth:
+        #     depth_image = get_depth_image(vertices, prn.triangles, h, w, True)
+        #     depth = get_depth_image(vertices, prn.triangles, h, w)
+        #     cv2.imwrite(os.path.join(save_folder, name + '_depth.jpg'), depth_image)
+        #     sio.savemat(os.path.join(save_folder, name + '_depth.mat'), {'depth': depth})
 
         if args.isKpt or args.isShow:
             # get landmarks
             kpt = prn.get_landmarks(pos)
             np.savetxt(os.path.join(save_folder, name + '_kpt.txt'), kpt)
 
-def change(inputDir,outputDir,model,image_name):
-    
-    import cv2
-    from utils.cv_plot import plot_kpt, plot_vertices, plot_pose_box
+        if args.isPose or args.isShow:
+            # estimate pose
+            camera_matrix, pose = estimate_pose(vertices)
+            np.savetxt(os.path.join(save_folder, name + '_pose.txt'), pose)
+            np.savetxt(os.path.join(save_folder, name + '_camera_matrix.txt'), camera_matrix)
 
-    # ---- transform
-    transform_img = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(FLAGS["normalize_mean"], FLAGS["normalize_std"])
-    ])
+            np.savetxt(os.path.join(save_folder, name + '_pose.txt'), pose)
 
-    # ---- init PRN
-    prn = PRN(model)
-    # ------------- load data
-    save_folder = outputDir
-    if not os.path.exists(save_folder):
-        os.mkdir(save_folder)
-  
+        if args.isShow:
+            # ---------- Plot
+            image_pose = plot_pose_box(image, camera_matrix, kpt)
+            cv2.imshow('sparse alignment', plot_kpt(image, kpt))
+            cv2.imshow('dense alignment', plot_vertices(image, vertices))
+            cv2.imshow('pose', plot_pose_box(image, camera_matrix, kpt))
+            cv2.waitKey(0)
 
-    image = cv2.imread(inputDir)
-    [h, w, c] = image.shape
-
-    # the core: regress position map
-    image = cv2.resize(image, (256, 256))
-    image_t = transform_img(image)
-    image_t = image_t.unsqueeze(0)
-    pos = prn.net_forward(image_t.cuda())  # input image has been cropped to 256x256
-
-    out = pos.cpu().detach().numpy()
-    pos = np.squeeze(out)
-    cropped_pos = pos * 255
-    pos = cropped_pos.transpose(1, 2, 0)
-    vertices = prn.get_vertices(pos)
-        
- 
-    save_vertices = vertices.copy()
-    save_vertices[:, 1] = h - 1 - save_vertices[:, 1]
-    pos_interpolated = pos.copy()
-    texture = cv2.remap(image, pos_interpolated[:, :, :2].astype(np.float32), None,
-                        interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0))
-                
-    vertices_vis = get_visibility(vertices, prn.triangles, h, w)
-    uv_mask = get_uv_mask(vertices_vis, prn.triangles, prn.uv_coords, h, w, prn.resolution_op)
-    uv_mask = cv2.resize(uv_mask, (256,256))
-    texture = texture * uv_mask[:, :, np.newaxis]
-    name=image_name.replace('.png', '.obj')
-    write_obj_with_texture(os.path.join(save_folder, name ), save_vertices, prn.triangles, texture,
-                       prn.uv_coords / prn.resolution_op,image_name)  # save 3d face with texture(can open with meshlab)
- 
-
- 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -185,13 +147,13 @@ if __name__ == '__main__':
                         help='whether to output 3D face(.obj). default save colors.')
     parser.add_argument('--isMat', default=False, type=ast.literal_eval,
                         help='whether to save vertices,color,triangles as mat for matlab showing')
-    parser.add_argument('--isKpt', default=True, type=ast.literal_eval,
+    parser.add_argument('--isKpt', default=False, type=ast.literal_eval,
                         help='whether to output key points(.txt)')
-    parser.add_argument('--isPose', default=True, type=ast.literal_eval,
+    parser.add_argument('--isPose', default=False, type=ast.literal_eval,
                         help='whether to output estimated pose(.txt)')
     parser.add_argument('--isShow', default=True, type=ast.literal_eval,
                         help='whether to show the results with opencv(need opencv)')
-    parser.add_argument('--isImage', default=True, type=ast.literal_eval,
+    parser.add_argument('--isImage', default=False, type=ast.literal_eval,
                         help='whether to save input image')
     # update in 2017/4/10
     parser.add_argument('--isFront', default=False, type=ast.literal_eval,
@@ -200,13 +162,11 @@ if __name__ == '__main__':
     parser.add_argument('--isDepth', default=False, type=ast.literal_eval,
                         help='whether to output depth image')
     # update in 2017/4/27
-    parser.add_argument('--isTexture', default=True, type=ast.literal_eval,
+    parser.add_argument('--isTexture', default=False, type=ast.literal_eval,
                         help='whether to save texture in obj file')
-    parser.add_argument('--isMask', default=True, type=ast.literal_eval,
+    parser.add_argument('--isMask', default=False, type=ast.literal_eval,
                         help='whether to set invisible pixels(due to self-occlusion) in texture as 0')
     # update in 2017/7/19
     parser.add_argument('--texture_size', default=256, type=int,
                         help='size of texture map, default is 256. need isTexture is True')
     main(parser.parse_args())
-      
-   
